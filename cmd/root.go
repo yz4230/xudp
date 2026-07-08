@@ -15,8 +15,10 @@ var rootOptions struct {
 	verbose bool
 	count   int
 	rate    int
+	src     net.IP
+	srcPort int
 	dst     net.IP
-	port    int
+	dstPort int
 	len     int
 }
 
@@ -37,8 +39,8 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
-		dst := &net.UDPAddr{IP: rootOptions.dst, Port: rootOptions.port}
-		conn, err := net.ListenUDP(udpNetwork(rootOptions.dst), nil)
+		dst := &net.UDPAddr{IP: rootOptions.dst, Port: rootOptions.dstPort}
+		conn, err := net.ListenUDP(udpNetwork(rootOptions.dst), localUDPAddr())
 		if err != nil {
 			return fmt.Errorf("open UDP socket: %w", err)
 		}
@@ -90,8 +92,11 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&rootOptions.verbose, "verbose", "v", false, "Verbose output")
 	rootCmd.Flags().IntVarP(&rootOptions.count, "count", "c", 1000, "Number of packets to send")
 	rootCmd.Flags().IntVarP(&rootOptions.rate, "rate", "r", 1000, "Packets per second")
+	rootCmd.Flags().IPVar(&rootOptions.src, "src", nil, "Source IP address")
+	rootCmd.Flags().IntVar(&rootOptions.srcPort, "src-port", 0, "Source port (0 selects an ephemeral port)")
 	rootCmd.Flags().IPVarP(&rootOptions.dst, "dst", "d", net.IPv6loopback, "Destination IP address")
-	rootCmd.Flags().IntVarP(&rootOptions.port, "port", "p", 4321, "Destination port")
+	rootCmd.Flags().IntVar(&rootOptions.dstPort, "dst-port", 4321, "Destination port (alias of --port)")
+	rootCmd.Flags().IntVarP(&rootOptions.dstPort, "port", "p", 4321, "Destination port")
 	rootCmd.Flags().IntVarP(&rootOptions.len, "len", "l", 64, "Length of the UDP payload")
 }
 
@@ -105,8 +110,14 @@ func validateRootOptions() error {
 	if rootOptions.dst == nil {
 		return fmt.Errorf("dst must be a valid IP address")
 	}
-	if rootOptions.port < 1 || rootOptions.port > 65535 {
-		return fmt.Errorf("port must be between 1 and 65535")
+	if rootOptions.dstPort < 1 || rootOptions.dstPort > 65535 {
+		return fmt.Errorf("destination port must be between 1 and 65535")
+	}
+	if rootOptions.srcPort < 0 || rootOptions.srcPort > 65535 {
+		return fmt.Errorf("source port must be between 0 and 65535")
+	}
+	if rootOptions.src != nil && !sameIPFamily(rootOptions.src, rootOptions.dst) {
+		return fmt.Errorf("src and dst must use the same IP address family")
 	}
 	if rootOptions.len < 0 {
 		return fmt.Errorf("len must be greater than or equal to 0")
@@ -114,9 +125,20 @@ func validateRootOptions() error {
 	return nil
 }
 
+func localUDPAddr() *net.UDPAddr {
+	if rootOptions.src == nil && rootOptions.srcPort == 0 {
+		return nil
+	}
+	return &net.UDPAddr{IP: rootOptions.src, Port: rootOptions.srcPort}
+}
+
 func udpNetwork(ip net.IP) string {
 	if ip.To4() != nil {
 		return "udp4"
 	}
 	return "udp6"
+}
+
+func sameIPFamily(a, b net.IP) bool {
+	return (a.To4() != nil) == (b.To4() != nil)
 }
